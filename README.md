@@ -143,4 +143,7 @@ const int MISSION_DAY   = 1;
 ## Using the web interface
 
 The web interface is reachable at `http://<hostname>.local/` 
+<img width="782" height="890" alt="Setup" src="https://github.com/user-attachments/assets/5e488fb9-017c-4ad8-a258-e9232e72eab9" />
+<img width="722" height="843" alt="LiveView" src="https://github.com/user-attachments/assets/174210a7-bc94-4d41-833e-cd483e89d8d9" />
+
 
