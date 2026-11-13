@@ -1,0 +1,30 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+//#######################  User Settings ####################################
+/*Which DCS-BIOS fork are you using? 
+------------------------------------------------------------
+DCSBIOS_DEFAULT = https://github.com/DCS-Skunkworks/dcs-bios-arduino-library
+Using USB for data communication
+------------------------------------------------------------
+DCSBIOS_WIFI_FORK = https://github.com/SCUBA82/dcs-bios-arduino-library
+Using Wifi for data communication
+*/
+
+//#define DCSBIOS_DEFAULT   
+#define DCSBIOS_WIFI_FORK   
+
+#define OTA_HOSTNAME "<Your Hostname>"
+
+
+// Wifi credentials if Wifi is enabled
+#ifdef DCSBIOS_WIFI_FORK
+  char ssid[] = "<Your SSID>";
+  char passwd[] = "<YOUR Password>";
+#endif 
+
+
+// BRMesh-Konfiguration (BrMesh Key)
+const uint8_t my_key[] = {0x00, 0x00, 0x00, 0x00}; //<Enter your BRMeshKey>
+
+#endif
