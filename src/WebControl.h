@@ -40,6 +40,11 @@ public:
   // fuer den Live-Tab. Wird bei jeder Anfrage an /api/live aufgerufen.
   void onLiveData(std::function<String()> callback) { liveCallback_ = callback; }
 
+  // Standard-Missionsdatum: JSON lesen bzw. neues Datum pruefen und speichern
+  // (Rueckgabe false mit Fehlertext in error)
+  void onDateGet(std::function<String()> callback) { dateGetCallback_ = callback; }
+  void onDateSet(std::function<bool(int, int, int, String &)> callback) { dateSetCallback_ = callback; }
+
 private:
   void handleRoot();
   void handleState();
@@ -49,6 +54,8 @@ private:
   void handleScenePost();
   void handleSceneReset();
   void handleLive();
+  void handleDateGet();
+  void handleDatePost();
 
   int argInt(const char *name, int defaultValue, int minValue, int maxValue);
   void sendState(int lamp);
@@ -62,4 +69,6 @@ private:
   bool manual_ = false;
   std::function<void()> autoResumeCallback_;
   std::function<String()> liveCallback_;
+  std::function<String()> dateGetCallback_;
+  std::function<bool(int, int, int, String &)> dateSetCallback_;
 };

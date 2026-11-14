@@ -185,6 +185,18 @@ button:hover{background:#424b58}
   <p class="hint">Icons next to each row: flask = show the row on the lamp (switches automatic mode off), check mark = copy the current values from the wheel and sliders into the row, trash can = remove the row. Values are blended linearly between keyframes. On saving, the rows are sorted by elevation and stored in the ESP32 flash.</p>
 </div>
 
+<div class="panel">
+  <h2>Default mission date</h2>
+  <div class="row">
+    <label for="dt_y">Year</label><input type="number" id="dt_y" min="1900" max="2200" step="1" inputmode="numeric">
+    <label for="dt_m">Month</label><input type="number" id="dt_m" min="1" max="12" step="1" inputmode="numeric">
+    <label for="dt_d">Day</label><input type="number" id="dt_d" min="1" max="31" step="1" inputmode="numeric">
+  </div>
+  <div class="btns"><button type="button" id="saveDate">Save</button></div>
+  <p class="hint" id="dateMsg"></p>
+  <p class="hint">DCS-BIOS only delivers the time of day. This date is used for the sun position until DCS provides the mission date. In use now: <span id="dateNow">–</span></p>
+</div>
+
 <div id="status"></div>
 </div>
 
@@ -197,6 +209,8 @@ button:hover{background:#424b58}
   <div class="panel">
     <h2>Mission (DCS-BIOS)</h2>
     <dl class="kv" id="kvMission">
+      <dt>Mission start date</dt><dd id="l_mdate">–</dd>
+      <dt>DCS date received</dt><dd id="l_draw">–</dd>
       <dt>Date</dt><dd id="l_date">–</dd>
       <dt>Time</dt><dd id="l_time">–</dd>
       <dt>Altitude (MSL)</dt><dd id="l_alt">–</dd>
@@ -500,9 +514,15 @@ button:hover{background:#424b58}
 
   function pad(n){ return (n < 10 ? '0' : '') + n; }
   function num(v, d){ return v === null || v === undefined ? '–' : Number(v).toFixed(d); }
+  // Dezimalgrad -> Grad ° Minuten ' Sekunden " (Sekunden mit einer Nachkommastelle)
   function coord(v, pos, neg){
     if (v === null || v === undefined) return '–';
-    return Math.abs(v).toFixed(4) + '° ' + (v >= 0 ? pos : neg);
+    var t = Math.round(Math.abs(v) * 36000) / 10;   // Bogensekunden, auf 0,1" gerundet
+    var deg = Math.floor(t / 3600);
+    t -= deg * 3600;
+    var min = Math.floor(t / 60);
+    var sec = t - min * 60;
+    return deg + '\u00B0 ' + pad(min) + "' " + (sec < 10 ? '0' : '') + sec.toFixed(0) + '" ' + (v >= 0 ? pos : neg);
   }
   function ft(v){ return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, '\u2009'); }
   function swatch(r, g, b, br, w6, w7){
@@ -539,6 +559,12 @@ button:hover{background:#424b58}
     $('kvMission').classList.toggle('stale', stale);
     $('kvSun').classList.toggle('stale', stale);
 
+    $('l_mdate').textContent = d.mdate ? d.mdate + (d.msrc === 'dcs' ? ' (from DCS)' : ' (default, set in Setup)') : '–';
+    var raw;
+    if (d.dcfg === false) raw = 'not set up in the firmware';
+    else if (d.dy == null && d.dm == null && d.dd == null) raw = 'nothing received yet';
+    else raw = (d.dy == null ? '–' : d.dy) + '-' + (d.dm == null ? '–' : d.dm) + '-' + (d.dd == null ? '–' : d.dd);
+    $('l_draw').textContent = raw;
     if (sun){
       var p = sun.date.split('-');
       $('l_date').textContent = p[0] + '-' + p[1] + '-' + p[2];
@@ -590,6 +616,29 @@ button:hover{background:#424b58}
   });
   document.addEventListener('visibilitychange', function(){ if (active && !document.hidden) start(); });
   show(location.hash === '#live' ? 'live' : 'setup');
+})();
+</script>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  function pad(n){ return (n < 10 ? '0' : '') + n; }
+  function load(){
+    fetch('/api/date').then(function(r){ return r.json(); }).then(function(j){
+      $('dt_y').value = j.y; $('dt_m').value = j.m; $('dt_d').value = j.d;
+      $('dateNow').textContent = j.ey + '-' + pad(j.em) + '-' + pad(j.ed) + (j.src === 'dcs' ? ' (from DCS)' : ' (default date)');
+    }).catch(function(){ $('dateMsg').textContent = 'Could not load the date.'; });
+  }
+  $('saveDate').addEventListener('click', function(){
+    var body = new URLSearchParams();
+    body.set('y', $('dt_y').value); body.set('m', $('dt_m').value); body.set('d', $('dt_d').value);
+    $('dateMsg').textContent = 'Saving …';
+    fetch('/api/date', {method: 'POST', body: body}).then(function(r){ return r.json(); }).then(function(j){
+      if (j.ok){ $('dateMsg').textContent = 'Saved.'; setTimeout(load, 1200); }
+      else { $('dateMsg').textContent = 'Not saved: ' + (j.error || 'unknown error'); }
+    }).catch(function(){ $('dateMsg').textContent = 'No connection.'; });
+  });
+  $('tabBtnSetup').addEventListener('click', load);
+  load();
 })();
 </script>
 </body>

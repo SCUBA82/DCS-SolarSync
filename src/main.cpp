@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <ArduinoOTA.h>
+#include <Preferences.h>
 #include "BRMesh.h"
 #include "config.h"
 #include "SceneConfig.h"
@@ -26,10 +27,15 @@ SceneConfig scene;
 WebControl web(mesh, scene);
 
 int lat_deg = 0;
+// ACHTUNG: In DCS-BIOS heissen LAT_SEC/LON_SEC zwar "Seconds", enthalten aber die ganzen
+// BOGENMINUTEN (0..59). LAT_SEC_FRAC/LON_SEC_FRAC ist der Bruchteil dieser Minute (geteilt durch 65535).
+// Beispiel 42 Grad 14' 38": DEG = 42, SEC = 14, SEC_FRAC = 0,6333 * 65535 (die 38 Bogensekunden).
 int lat_sec = 0;
+int lat_frac = 0;
 char lat_dir[2] = "N";
 int lon_deg = 0;
 int lon_sec = 0;
+int lon_frac = 0;
 char lon_dir[2] = "E";
 
 bool gotLatDeg = false;
@@ -162,6 +168,11 @@ void onLatSecChange(unsigned int newValue) {
 }
 DcsBios::IntegerBuffer latSecBuffer(CommonData_LAT_SEC, onLatSecChange);
 
+void onLatSecFracChange(unsigned int newValue) {
+  lat_frac = static_cast<int>(newValue);
+}
+DcsBios::IntegerBuffer latSecFracBuffer(CommonData_LAT_SEC_FRAC, onLatSecFracChange);
+
 void onLatZDirChange(char *newValue) {
   copyDcsString(lat_dir, sizeof(lat_dir), newValue);
   gotLatDir = true;
@@ -179,6 +190,11 @@ void onLonSecChange(unsigned int newValue) {
   gotLonSec = true;
 }
 DcsBios::IntegerBuffer lonSecBuffer(CommonData_LON_SEC, onLonSecChange);
+
+void onLonSecFracChange(unsigned int newValue) {
+  lon_frac = static_cast<int>(newValue);
+}
+DcsBios::IntegerBuffer lonSecFracBuffer(CommonData_LON_SEC_FRAC, onLonSecFracChange);
 
 void onLonZDirChange(char *newValue) {
   copyDcsString(lon_dir, sizeof(lon_dir), newValue);
@@ -204,8 +220,8 @@ DcsBios::IntegerBuffer altMslFtBuffer(CommonData_ALT_MSL_FT, onAltMslFtChange);
 
 void printDcsValues() {
   
-  Serial.printf("Latitude:  %d %s %d\n", lat_deg, lat_dir, lat_sec);
-  Serial.printf("Longitude: %d %s %d\n", lon_deg, lon_dir, lon_sec);
+  Serial.printf("Latitude:  %d deg %d.%05d min %s\n", lat_deg, lat_sec, (int)((long long)lat_frac * 100000LL / 65535), lat_dir);
+  Serial.printf("Longitude: %d deg %d.%05d min %s\n", lon_deg, lon_sec, (int)((long long)lon_frac * 100000LL / 65535), lon_dir);
   Serial.printf("Mission start HIGH: %u\n", timeStartHigh);
   Serial.printf("Mission start LOW: %u\n", timeStartLow);
   Serial.printf("Mission elapsed seconds: %s\n", missionTime);
@@ -349,10 +365,92 @@ void processSerialCommand(String command) {
 // Automatische Lichtszene anhand des Sonnenstands
 // ---------------------------------------------------------------------------
 
-// Festes DCS-Missionsdatum: 01.07.2026
+// Ersatz-Missionsdatum, solange von DCS-BIOS noch kein Datum empfangen wurde: 01.07.2026
 const int MISSION_YEAR = 2026;
 const int MISSION_MONTH = 7;
 const int MISSION_DAY = 1;
+
+// Missionsdatum aus DCS: Der Hook MissionDateHook.lua schreibt es in eine Datei, das DCS-BIOS-Modul
+// CommonData_MissionDate (dcs/MissionDate.lua) exportiert es als CommonData_MissionDate_YEAR / _MONTH / _DAY
+// (siehe dcs/ und README). Die Adressen kommen aus dem DCS-BIOS Reference Tool.
+// Stehen die Eintraege schon in einer Headerdatei der DCS-BIOS-Bibliothek, wird nichts weiter gebraucht.
+// Sonst hier einkommentieren und im Format der vorhandenen Eintraege (z.B. CommonData_LAT_DEG) ausfuellen.
+// Ohne diese Eintraege gilt das Ersatzdatum oben.
+//#define CommonData_MissionDate_YEAR  0x0000, 0x0000, 0   // Adresse, Maske, Shift: Platzhalter ersetzen, keine <> setzen
+//#define CommonData_MissionDate_MONTH 0x0000, 0x0000, 0   // Adresse, Maske, Shift: Platzhalter ersetzen, keine <> setzen
+//#define CommonData_MissionDate_DAY   0x0000, 0x0000, 0   // Adresse, Maske, Shift: Platzhalter ersetzen, keine <> setzen
+
+// Standarddatum: gilt, bis DCS ein Datum liefert. Im Webinterface einstellbar und im Flash gespeichert
+// (die Konstanten oben sind nur der Werkswert).
+int defaultYear = MISSION_YEAR;
+int defaultMonth = MISSION_MONTH;
+int defaultDay = MISSION_DAY;
+
+// Aktuell verwendetes Missionsdatum (DCS-Datum oder Standarddatum)
+int missionYear = MISSION_YEAR;
+int missionMonth = MISSION_MONTH;
+int missionDay = MISSION_DAY;
+bool missionDateFromDcs = false;
+
+// Zuletzt von DCS empfangene Werte (0 = nicht verfuegbar)
+int dcsMissionYear = 0;
+int dcsMissionMonth = 0;
+int dcsMissionDay = 0;
+bool gotDcsMissionYear = false;   // Rohwert wurde mindestens einmal empfangen (Diagnose, Live-Tab)
+bool gotDcsMissionMonth = false;
+bool gotDcsMissionDay = false;
+
+// Uebernimmt das DCS-Datum, sobald alle drei Werte gueltig sind. Wird aus loop() aufgerufen
+// (nicht aus den Callbacks), damit nie ein gemischtes Datum aus alten und neuen Werten benutzt wird.
+// Meldet DCS wieder 0 (z.B. nach Missionsende), bleibt das zuletzt gueltige Datum erhalten.
+void applyDcsMissionDate() {
+  const bool valid = dcsMissionYear >= 1 && dcsMissionMonth >= 1 && dcsMissionMonth <= 12 &&
+                     dcsMissionDay >= 1 && dcsMissionDay <= 31;
+  if (valid) {
+    if (!missionDateFromDcs || dcsMissionYear != missionYear ||
+        dcsMissionMonth != missionMonth || dcsMissionDay != missionDay) {
+      Serial.printf("Missionsdatum aus DCS: %04d-%02d-%02d\n",
+                    dcsMissionYear, dcsMissionMonth, dcsMissionDay);
+    }
+    missionYear = dcsMissionYear;
+    missionMonth = dcsMissionMonth;
+    missionDay = dcsMissionDay;
+    missionDateFromDcs = true;
+    return;
+  }
+  // Noch kein DCS-Datum empfangen: Standarddatum verwenden (auch nach einer Aenderung im Webinterface)
+  if (!missionDateFromDcs) {
+    missionYear = defaultYear;
+    missionMonth = defaultMonth;
+    missionDay = defaultDay;
+  }
+}
+
+#if defined(CommonData_MissionDate_YEAR) && defined(CommonData_MissionDate_MONTH) && defined(CommonData_MissionDate_DAY)
+const bool MISSION_DATE_CONFIGURED = true;
+void onMissionYearChange(unsigned int newValue) {
+  dcsMissionYear = (int)newValue;
+  gotDcsMissionYear = true;
+  Serial.printf("DCS MissionDate YEAR = %u\n", newValue);
+}
+void onMissionMonthChange(unsigned int newValue) {
+  dcsMissionMonth = (int)newValue;
+  gotDcsMissionMonth = true;
+  Serial.printf("DCS MissionDate MONTH = %u\n", newValue);
+}
+void onMissionDayChange(unsigned int newValue) {
+  dcsMissionDay = (int)newValue;
+  gotDcsMissionDay = true;
+  Serial.printf("DCS MissionDate DAY = %u\n", newValue);
+}
+DcsBios::IntegerBuffer missionYearBuffer(CommonData_MissionDate_YEAR, onMissionYearChange);
+DcsBios::IntegerBuffer missionMonthBuffer(CommonData_MissionDate_MONTH, onMissionMonthChange);
+DcsBios::IntegerBuffer missionDayBuffer(CommonData_MissionDate_DAY, onMissionDayChange);
+#else
+// Es muessen ALLE DREI Eintraege definiert sein, sonst bleibt das DCS-Datum komplett abgeschaltet.
+const bool MISSION_DATE_CONFIGURED = false;
+#pragma message("MissionDate: CommonData_MissionDate_YEAR, _MONTH und _DAY sind nicht alle definiert. Es gilt das Standarddatum.")
+#endif
 
 enum LightScene : int {
   SCENE_NIGHT = 0,
@@ -404,6 +502,65 @@ void addDaysToDate(int &year, int &month, int &day, unsigned long daysToAdd) {
       }
     }
   }
+}
+
+// ---- Standard-Missionsdatum: Flash und Webinterface -------------------------
+
+void loadDefaultMissionDate() {
+  Preferences prefs;
+  if (prefs.begin("mission", true)) {  // schlaegt fehl, solange der Namespace noch nicht existiert
+    const int y = prefs.getUShort("y", 0);
+    const int m = prefs.getUChar("m", 0);
+    const int d = prefs.getUChar("d", 0);
+    prefs.end();
+    if (y >= 1900 && y <= 2200 && m >= 1 && m <= 12 && d >= 1 && d <= daysInMonth(y, m)) {
+      defaultYear = y;
+      defaultMonth = m;
+      defaultDay = d;
+      Serial.printf("Standard-Missionsdatum aus dem Flash: %04d-%02d-%02d\n", y, m, d);
+    }
+  }
+  if (!missionDateFromDcs) {
+    missionYear = defaultYear;
+    missionMonth = defaultMonth;
+    missionDay = defaultDay;
+  }
+}
+
+// Prueft, uebernimmt und speichert das Standarddatum. Fehlertexte erscheinen im Webinterface.
+bool setDefaultMissionDate(int y, int m, int d, String &error) {
+  if (y < 1900 || y > 2200) { error = "Year must be 1900 to 2200"; return false; }
+  if (m < 1 || m > 12) { error = "Month must be 1 to 12"; return false; }
+  if (d < 1 || d > daysInMonth(y, m)) {
+    error = "Day must be 1 to " + String(daysInMonth(y, m)) + " for this month";
+    return false;
+  }
+
+  defaultYear = y;
+  defaultMonth = m;
+  defaultDay = d;
+
+  Preferences prefs;
+  if (!prefs.begin("mission", false)) {
+    error = "Valid, but the flash storage could not be opened";
+    return false;
+  }
+  prefs.putUShort("y", (uint16_t)y);
+  prefs.putUChar("m", (uint8_t)m);
+  prefs.putUChar("d", (uint8_t)d);
+  prefs.end();
+
+  Serial.printf("Standard-Missionsdatum gespeichert: %04d-%02d-%02d\n", y, m, d);
+  return true;  // wirkt bei der naechsten Sonnenstandsberechnung (hoechstens ~1 s)
+}
+
+String buildDateJson() {
+  char buf[160];
+  snprintf(buf, sizeof(buf),
+           "{\"y\":%d,\"m\":%d,\"d\":%d,\"ey\":%d,\"em\":%d,\"ed\":%d,\"src\":\"%s\"}",
+           defaultYear, defaultMonth, defaultDay, missionYear, missionMonth, missionDay,
+           missionDateFromDcs ? "dcs" : "default");
+  return String(buf);
 }
 
 float normalizeDegrees(float value) {
@@ -512,7 +669,6 @@ const char *sceneName(int scene) {
 
 
 
-const int WHITE_KEYFRAME_COUNT = sizeof(WHITE_KEYFRAMES) / sizeof(WHITE_KEYFRAMES[0]);
 
 // Zustand
 bool lightInitialized = false;
@@ -592,8 +748,9 @@ LiveSun live;
 // Dezimalgrad aus den DCS-Koordinaten; false, wenn unvollstaendig oder ausserhalb des Bereichs
 bool getDcsPosition(double &latitude, double &longitude) {
   if (!(gotLatDeg && gotLatSec && gotLatDir && gotLonDeg && gotLonSec && gotLonDir)) return false;
-  latitude = lat_deg + (double)lat_sec / 3600.0;
-  longitude = lon_deg + (double)lon_sec / 3600.0;
+  // Grad + (ganze Minuten + Bruchteil einer Minute) / 60
+  latitude = lat_deg + ((double)lat_sec + (double)lat_frac / 65535.0) / 60.0;
+  longitude = lon_deg + ((double)lon_sec + (double)lon_frac / 65535.0) / 60.0;
   if (lat_dir[0] == 'S' || lat_dir[0] == 's') latitude = -latitude;
   if (lon_dir[0] == 'W' || lon_dir[0] == 'w') longitude = -longitude;
   return latitude >= -90.0 && latitude <= 90.0 && longitude >= -180.0 && longitude <= 180.0;
@@ -613,7 +770,7 @@ String buildLiveJson() {
   if (modTimeSeen) dcs = (now - lastModTimeChange > MOD_TIME_TIMEOUT_MS) ? 2 : 1;
 
   String j;
-  j.reserve(520);
+  j.reserve(760);
   j += "{\"dcs\":";
   j += dcs;
   j += ",\"age\":";
@@ -621,16 +778,26 @@ String buildLiveJson() {
   j += ",\"fallback\":";
   j += fallbackActive ? "true" : "false";
 
+  char dateBuf[64];
+  snprintf(dateBuf, sizeof(dateBuf), ",\"mdate\":\"%04d-%02d-%02d\",\"msrc\":\"%s\"",
+           missionYear, missionMonth, missionDay, missionDateFromDcs ? "dcs" : "default");
+  j += dateBuf;
+  j += ",\"dcfg\":";
+  j += MISSION_DATE_CONFIGURED ? "true" : "false";
+  jsonNum(j, "dy", gotDcsMissionYear, dcsMissionYear, 0);
+  jsonNum(j, "dm", gotDcsMissionMonth, dcsMissionMonth, 0);
+  jsonNum(j, "dd", gotDcsMissionDay, dcsMissionDay, 0);
+
   double lat = 0, lon = 0;
   const bool pos = getDcsPosition(lat, lon);
-  jsonNum(j, "lat", pos, lat, 4);
-  jsonNum(j, "lon", pos, lon, 4);
+  jsonNum(j, "lat", pos, lat, 6);
+  jsonNum(j, "lon", pos, lon, 6);
   jsonNum(j, "alt_ft", gotAltMsl, (double)altMslFt, 0);
   jsonNum(j, "alt_m", gotAltMsl, altMslFt * 0.3048, 0);
 
   j += ",\"sun\":";
   if (live.valid) {
-    char buf[64];
+    char buf[128];  // Das laengste Stueck (Szenenwerte) braucht rund 70 Zeichen
     snprintf(buf, sizeof(buf), "\"date\":\"%04d-%02d-%02d\",\"time\":\"%02d:%02d:%02d\"",
              live.year, live.month, live.day, live.hour, live.minute, live.second);
     j += "{";
@@ -715,9 +882,10 @@ void updateAutomaticLighting(bool apply) {
   const int minute = (secondsOfDay % 3600UL) / 60UL;
   const int second = secondsOfDay % 60UL;
 
-  int solarYear = MISSION_YEAR;
-  int solarMonth = MISSION_MONTH;
-  int solarDay = MISSION_DAY;
+  applyDcsMissionDate();
+  int solarYear = missionYear;
+  int solarMonth = missionMonth;
+  int solarDay = missionDay;
   addDaysToDate(solarYear, solarMonth, solarDay, dayOffset);
 
   double latitude = 0.0, longitude = 0.0;
@@ -766,9 +934,12 @@ void setup() {
   WiFi.setHostname(OTA_HOSTNAME);
   web.setHostname(OTA_HOSTNAME);   // für mDNS
   DcsBios::setup(ssid, passwd);
+  loadDefaultMissionDate();
   scene.begin();
   web.begin();
   web.onLiveData(buildLiveJson);
+  web.onDateGet(buildDateJson);
+  web.onDateSet(setDefaultMissionDate);
   web.onAutoResume([]() { lightInitialized = false; scene.resetState(); });
   setupOTA();
    
@@ -814,4 +985,3 @@ void loop() {
     updateAutomaticLighting(!manual);
   }
 }
-

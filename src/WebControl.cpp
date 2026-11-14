@@ -21,6 +21,8 @@ void WebControl::begin() {
   server_.on("/api/scene", HTTP_POST, [this]() { handleScenePost(); });
   server_.on("/api/scene/reset", HTTP_POST, [this]() { handleSceneReset(); });
   server_.on("/api/live", HTTP_GET, [this]() { handleLive(); });
+  server_.on("/api/date", HTTP_GET, [this]() { handleDateGet(); });
+  server_.on("/api/date", HTTP_POST, [this]() { handleDatePost(); });
 }
 
 void WebControl::loop() {
@@ -168,4 +170,26 @@ void WebControl::handleLive() {
 
   server_.sendHeader("Cache-Control", "no-store");
   server_.send(200, "application/json", j);
+}
+
+void WebControl::handleDateGet() {
+  server_.sendHeader("Cache-Control", "no-store");
+  server_.send(200, "application/json", dateGetCallback_ ? dateGetCallback_() : String("{}"));
+}
+
+void WebControl::handleDatePost() {
+  if (!dateSetCallback_) {
+    server_.send(501, "application/json", "{\"ok\":false,\"error\":\"Not available\"}");
+    return;
+  }
+  if (!server_.hasArg("y") || !server_.hasArg("m") || !server_.hasArg("d")) {
+    server_.send(400, "application/json", "{\"ok\":false,\"error\":\"Year, month and day are required\"}");
+    return;
+  }
+  String error;
+  if (!dateSetCallback_(server_.arg("y").toInt(), server_.arg("m").toInt(), server_.arg("d").toInt(), error)) {
+    server_.send(400, "application/json", "{\"ok\":false,\"error\":\"" + error + "\"}");
+    return;
+  }
+  server_.send(200, "application/json", "{\"ok\":true}");
 }
