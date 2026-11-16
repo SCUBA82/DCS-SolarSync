@@ -29,5 +29,5 @@ This values can be consumed by standard DCS-Bios Arduino Code.
 - Start/Restart DCS World
 - Optional:
    -   Check "DCS-BIOS PATH\doc\Addresses.h" for newly added Date attributes
-   -   Check BORT und "Common Data" for newly added Date attributes
+   -   Check BORT under "Common Data" for newly added Date attributes
 
