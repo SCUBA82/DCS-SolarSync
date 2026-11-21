@@ -475,20 +475,20 @@ bool gotDcsMapId = false;
 // Platzhaltercallback: Die spaetere Kartenerkennung soll einen dieser internen
 // MAP_* Werte liefern. Der Callback ist bewusst analog zu den uebrigen
 // DCS-BIOS-Callbacks aufgebaut.
-void onMapIdChange(unsigned int newValue) {
-  if (newValue <= MAP_GERMANY_CW) {
-    currentDcsMapId = static_cast<uint8_t>(newValue);
-    gotDcsMapId = (newValue != MAP_UNKNOWN);
-  } else {
-    currentDcsMapId = MAP_UNKNOWN;
-    gotDcsMapId = false;
+#ifdef CommonData_MAP_ID
+  void onMapIdChange(unsigned int newValue) {
+    if (newValue <= MAP_GERMANY_CW) {
+      currentDcsMapId = static_cast<uint8_t>(newValue);
+      gotDcsMapId = (newValue != MAP_UNKNOWN);
+    } else {
+      currentDcsMapId = MAP_UNKNOWN;
+      gotDcsMapId = false;
+    }
   }
-}
-DcsBios::IntegerBuffer mapIdBuffer(CommonData_MAP_ID, onMapIdChange);
+  DcsBios::IntegerBuffer mapIdBuffer(CommonData_MAP_ID, onMapIdChange);
+#endif
 
-// Spaeter den passenden DCS-BIOS-Makroeintrag ergaenzen, z.B.:
-// DcsBios::IntegerBuffer mapIdBuffer(CommonData_MAP_ID, onMapIdChange);
-// Dabei muss CommonData_MAP_ID den numerischen MAP_* Wert liefern.
+
 
 const MapTimeZone *findMapTimeZone() {
   if (!gotDcsMapId) return nullptr;
