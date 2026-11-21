@@ -197,6 +197,14 @@ button:hover{background:#424b58}
   <p class="hint">DCS-BIOS only delivers the time of day. This date is used for the sun position until DCS provides the mission date. In use now: <span id="dateNow">–</span></p>
 </div>
 
+<div class="panel">
+  <h2>Map time zones (UTC)</h2>
+  <p class="hint">Offsets are local mission time relative to UTC. The fallback is used when no DCS map ID is available.</p>
+  <div id="tzRows"></div>
+  <div class="btns"><button type="button" id="saveTimeZones">Save time zones</button></div>
+  <p class="hint" id="tzMsg"></p>
+</div>
+
 <div id="status"></div>
 </div>
 
@@ -217,6 +225,17 @@ button:hover{background:#424b58}
       <dt>Latitude</dt><dd id="l_lat">–</dd>
       <dt>Longitude</dt><dd id="l_lon">–</dd>
     </dl>
+  </div>
+
+  <div class="panel">
+    <h2>Active map / time zone</h2>
+    <dl class="kv" id="kvTimeZone">
+      <dt>Map</dt><dd id="l_map">–</dd>
+      <dt>Time zone source</dt><dd id="l_tzsrc">–</dd>
+      <dt>UTC offset in use</dt><dd id="l_tzoffset">–</dd>
+      <dt>Daylight saving time</dt><dd id="l_dst">–</dd>
+    </dl>
+    <p class="hint">Shows the time zone used by the solar-position calculation. The default setting is used until a valid DCS map ID is detected.</p>
   </div>
 
   <div class="panel">
@@ -546,8 +565,73 @@ button:hover{background:#424b58}
     [v.r, v.g, v.b, v.br, v.w6, v.w7].forEach(function(x){ grid.appendChild(cell('n', x)); });
   }
 
+  var lastLiveJson = null;
+
+  function nthSunday(year, month, nth){
+    var firstDow = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+    return 1 + ((7 - firstDow) % 7) + (nth - 1) * 7;
+  }
+  function lastSunday(year, month){
+    var lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    var dow = new Date(Date.UTC(year, month - 1, lastDay)).getUTCDay();
+    return lastDay - dow;
+  }
+  // Keep these transitions identical to isDaylightSavingTime() in main.cpp.
+  function isDst(rule, year, month, day, hour){
+    if (!rule) return false;
+    if (rule === 1){
+      var usStart = nthSunday(year, 3, 2), usEnd = nthSunday(year, 11, 1);
+      if (month < 3 || month > 11) return false;
+      if (month > 3 && month < 11) return true;
+      if (month === 3) return day > usStart || (day === usStart && hour >= 2);
+      return day < usEnd || (day === usEnd && hour < 2);
+    }
+    if (rule === 2){
+      var euStart = lastSunday(year, 3), euEnd = lastSunday(year, 10);
+      if (month < 3 || month > 10) return false;
+      if (month > 3 && month < 10) return true;
+      if (month === 3) return day > euStart || (day === euStart && hour >= 2);
+      return day < euEnd || (day === euEnd && hour < 3);
+    }
+    return false;
+  }
+  function renderTimeZone(d, sun){
+    $('l_map').textContent = d.map || 'Unknown / not detected';
+    var fromMap = d.tzsrc === 'map' && !!d.map;
+    $('l_tzsrc').textContent = fromMap ? 'Map configuration' : 'Default fallback';
+    var timeZoneConfig = window.brmeshTimeZoneConfig || null;
+    if (!timeZoneConfig){
+      $('l_tzoffset').textContent = 'Loading configuration …';
+      $('l_dst').textContent = '–';
+      return;
+    }
+    var cfg = fromMap ? (timeZoneConfig.maps || []).filter(function(m){ return m.name === d.map; })[0] : null;
+    if (!cfg) cfg = timeZoneConfig.default;
+    if (!cfg){
+      $('l_tzoffset').textContent = '–'; $('l_dst').textContent = '–'; return;
+    }
+    var base = Number(cfg.offset);
+    var dst = null;
+    if (sun && sun.date && sun.time){
+      var dateParts = sun.date.split('-'), timeParts = sun.time.split(':');
+      if (dateParts.length === 3 && timeParts.length >= 1){
+        dst = isDst(Number(cfg.rule), Number(dateParts[0]), Number(dateParts[1]),
+                    Number(dateParts[2]), Number(timeParts[0]));
+      }
+    }
+    var activeOffset = base + (dst ? 1 : 0);
+    var sign = activeOffset >= 0 ? '+' : '−';
+    var abs = Math.abs(activeOffset), hours = Math.floor(abs), minutes = Math.round((abs - hours) * 60);
+    if (minutes === 60){ hours++; minutes = 0; }
+    $('l_tzoffset').textContent = 'UTC' + sign + hours + ':' + (minutes < 10 ? '0' : '') + minutes +
+      (dst ? ' (standard ' + (base >= 0 ? '+' : '−') + Math.abs(base).toFixed(2) + ')' : '');
+    $('l_dst').textContent = dst === null ? 'Not available (no calculated mission time)' : (dst ? 'Active' : 'Inactive');
+  }
+
   function render(j){
+    lastLiveJson = j;
     var d = j.data || {}, sun = d.sun, dcs = d.dcs;
+    renderTimeZone(d, sun);
     var dot = $('dcsDot'), txt = $('dcsText'), sub = $('dcsSub');
     var mode = j.manual ? 'Manual mode, automatic mode is off.' : (d.fallback ? 'Default scene active because no DCS data is arriving.' : 'Automatic mode active.');
     if (dcs === 1){ dot.className = 'dot ok'; txt.textContent = 'DCS-BIOS connected'; sub.textContent = 'Mission time is updating. ' + mode; }
@@ -594,6 +678,10 @@ button:hover{background:#424b58}
       (j.queue ? ' (' + j.queue + ' commands in the queue)' : '') + '.';
   }
 
+  window.addEventListener('brmesh-timezone-config', function(){
+    if (lastLiveJson) renderTimeZone(lastLiveJson.data || {}, (lastLiveJson.data || {}).sun);
+  });
+
   function poll(){
     timer = null;
     if (!active || document.hidden) return;
@@ -638,6 +726,54 @@ button:hover{background:#424b58}
     }).catch(function(){ $('dateMsg').textContent = 'No connection.'; });
   });
   $('tabBtnSetup').addEventListener('click', load);
+  load();
+})();
+</script>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var rules = ['No DST','US DST','EU DST'];
+  var rows = [];
+  function makeRow(item, isDefault){
+    var wrap = document.createElement('div');
+    wrap.className = 'row'; wrap.style.margin = '10px 0';
+    var label = document.createElement('label');
+    label.textContent = isDefault ? 'Default (no DCS map)' : item.name;
+    label.style.minWidth = '145px'; wrap.appendChild(label);
+    var offset = document.createElement('input'); offset.type = 'number'; offset.step = '0.25';
+    offset.min = '-12'; offset.max = '14'; offset.value = item.offset;
+    offset.setAttribute('aria-label','UTC offset hours'); wrap.appendChild(offset);
+    var rule = document.createElement('select');
+    rules.forEach(function(t,i){ var o=document.createElement('option'); o.value=i; o.textContent=t; rule.appendChild(o); });
+    rule.value = item.rule; wrap.appendChild(rule);
+    rows.push({id:isDefault ? 0 : item.id, offset:offset, rule:rule});
+    $('tzRows').appendChild(wrap);
+  }
+  function load(){
+    rows=[]; $('tzRows').innerHTML='';
+    fetch('/api/timezone').then(function(r){return r.json();}).then(function(j){
+      window.brmeshTimeZoneConfig = j;
+      makeRow(j.default,true);
+      (j.maps || []).forEach(function(m){makeRow(m,false);});
+      window.dispatchEvent(new Event('brmesh-timezone-config'));
+    }).catch(function(){ $('tzMsg').textContent='Could not load time zones.'; });
+  }
+  $('saveTimeZones').addEventListener('click',function(){
+    var chain=Promise.resolve();
+    $('tzMsg').textContent='Saving …';
+    rows.forEach(function(row){
+      chain=chain.then(function(){
+        var body=new URLSearchParams();
+        body.set('id',row.id); body.set('offset',row.offset.value); body.set('rule',row.rule.value);
+        return fetch('/api/timezone',{method:'POST',body:body}).then(function(r){return r.json();}).then(function(j){
+          if(!j.ok) throw new Error(j.error || 'Save failed');
+        });
+      });
+    });
+    chain.then(function(){ $('tzMsg').textContent='Saved to ESP32 flash.'; load(); })
+      .catch(function(e){ $('tzMsg').textContent='Not saved: '+e.message; });
+  });
+  $('tabBtnSetup').addEventListener('click',load);
   load();
 })();
 </script>

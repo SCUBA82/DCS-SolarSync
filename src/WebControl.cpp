@@ -1,6 +1,7 @@
 #include "WebControl.h"
 
 #include <ESPmDNS.h>
+#include <cmath>
 #include <WiFi.h>
 
 #include "WebUI.h"
@@ -23,6 +24,8 @@ void WebControl::begin() {
   server_.on("/api/live", HTTP_GET, [this]() { handleLive(); });
   server_.on("/api/date", HTTP_GET, [this]() { handleDateGet(); });
   server_.on("/api/date", HTTP_POST, [this]() { handleDatePost(); });
+  server_.on("/api/timezone", HTTP_GET, [this]() { handleTimeZoneGet(); });
+  server_.on("/api/timezone", HTTP_POST, [this]() { handleTimeZonePost(); });
 }
 
 void WebControl::loop() {
@@ -189,6 +192,33 @@ void WebControl::handleDatePost() {
   String error;
   if (!dateSetCallback_(server_.arg("y").toInt(), server_.arg("m").toInt(), server_.arg("d").toInt(), error)) {
     server_.send(400, "application/json", "{\"ok\":false,\"error\":\"" + error + "\"}");
+    return;
+  }
+  server_.send(200, "application/json", "{\"ok\":true}");
+}
+
+
+void WebControl::handleTimeZoneGet() {
+  server_.sendHeader("Cache-Control", "no-store");
+  server_.send(200, "application/json", timeZoneGetCallback_ ? timeZoneGetCallback_() : String("{}"));
+}
+
+void WebControl::handleTimeZonePost() {
+  if (!timeZoneSetCallback_) {
+    server_.send(501, "application/json", "{\"ok\":false,\"error\":\"Not available\"}");
+    return;
+  }
+  if (!server_.hasArg("id") || !server_.hasArg("offset") || !server_.hasArg("rule")) {
+    server_.send(400, "application/json", "{\"ok\":false,\"error\":\"ID, offset and rule are required\"}");
+    return;
+  }
+  const int id = server_.arg("id").toInt();
+  const float hours = server_.arg("offset").toFloat();
+  const int offsetMinutes = (int)lroundf(hours * 60.0f);
+  String error;
+  if (!timeZoneSetCallback_(id, offsetMinutes, server_.arg("rule").toInt(), error)) {
+    String msg = "{\"ok\":false,\"error\":\"" + error + "\"}";
+    server_.send(400, "application/json", msg);
     return;
   }
   server_.send(200, "application/json", "{\"ok\":true}");

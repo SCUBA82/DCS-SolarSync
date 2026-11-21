@@ -19,6 +19,7 @@
 #endif
 
 #include <DcsBios.h>
+#include "C:\Users\chris\Saved Games\DCS\Scripts\DCS-BIOS\doc\Addresses.h" //Custom Addresses for MissionDate and MapId may be defined here, if not already in DCS-BIOS library
 
 
 
@@ -229,139 +230,6 @@ void printDcsValues() {
 }
 
 // ---------------------------------------------------------------------------
-// Serielle Steuerung
-// ---------------------------------------------------------------------------
-
-void printHelp() {
-  Serial.println();
-  Serial.println("BRMesh serielle Lampensteuerung");
-  Serial.println("Befehle (Zeilenende: Newline):");
-  Serial.println("  1 ON                     - Lampe 1 einschalten");
-  Serial.println("  1 OFF                    - Lampe 1 ausschalten");
-  Serial.println("  2 COLOR <R> <G> <B>      - RGB-Farbe setzen (je 0-255)");
-  Serial.println("  2 BRIGHTNESS <Wert>      - Helligkeit setzen (0-255)");
-  Serial.printf ("  Lampennummern: 1-%u\n", mesh.lampCount());
-  Serial.println("  Beispiel: 1 COLOR 255 0 0");
-  Serial.println("  Beispiel: 1 BRIGHTNESS 128");
-  Serial.println("  HELP                     - diese Hilfe anzeigen");
-  Serial.println();
-}
-
-bool parseByteValue(const String &text, uint8_t &value) {
-  if (text.length() == 0) return false;
-  char *endPtr = nullptr;
-  long parsed = strtol(text.c_str(), &endPtr, 10);
-  if (*endPtr != '\0' || parsed < 0 || parsed > 255) return false;
-  value = (uint8_t)parsed;
-  return true;
-}
-
-void processSerialCommand(String command) {
-  command.trim();
-  command.toUpperCase();
-
-  if (command == "HELP" || command == "?") {
-    printHelp();
-    return;
-  }
-
-  int separator = command.indexOf(' ');
-  if (separator < 0) {
-    Serial.println("Ungueltiger Befehl. Beispiel: 1 COLOR 255 0 0");
-    return;
-  }
-
-  String lightText = command.substring(0, separator);
-  String arguments = command.substring(separator + 1);
-  arguments.trim();
-  int lightNumber = lightText.toInt();
-
-  if (lightText.length() == 0 || !mesh.isValidLamp(lightNumber)) {
-    Serial.printf("Fehler: Bitte eine Lampennummer von 1 bis %u angeben.\n",
-                  mesh.lampCount());
-    return;
-  }
-
-  if (arguments == "ON" || arguments == "EIN") {
-    mesh.setPower(lightNumber, true);
-    return;
-  }
-
-  if (arguments == "OFF" || arguments == "AUS") {
-    mesh.setPower(lightNumber, false);
-    return;
-  }
-
-  int argSeparator = arguments.indexOf(' ');
-  if (argSeparator < 0) {
-    Serial.println("Ungueltiger Befehl. Nutze COLOR R G B oder BRIGHTNESS 0-255.");
-    return;
-  }
-
-  String action = arguments.substring(0, argSeparator);
-  String values = arguments.substring(argSeparator + 1);
-  action.trim();
-  values.trim();
-
-  if (action == "BRIGHTNESS") {
-    uint8_t brightness;
-    if (!parseByteValue(values, brightness)) {
-      Serial.println("Fehler: Helligkeit muss eine ganze Zahl von 0 bis 255 sein.");
-      return;
-    }
-    mesh.setBrightness(lightNumber, brightness);
-    return;
-  }
-    if (action == "WHITE") {
-    int sp = values.indexOf(' ');
-    uint8_t w6, w7;
-    if (sp < 0 ||
-        !parseByteValue(values.substring(0, sp), w6) ||
-        !parseByteValue(values.substring(sp + 1), w7)) {
-      Serial.println("Fehler: Format WHITE <Byte6> <Byte7>, je 0-255.");
-      return;
-    }
-    mesh.setWhite(lightNumber, w6, w7);
-    return;
-  }
-
-  if (action == "COLOR" || action == "RGB") {
-    int firstSpace = values.indexOf(' ');
-    if (firstSpace < 0) {
-      Serial.println("Fehler: Format COLOR <R> <G> <B>, Werte jeweils 0-255.");
-      return;
-    }
-
-    String redText = values.substring(0, firstSpace);
-    String remaining = values.substring(firstSpace + 1);
-    remaining.trim();
-    int secondSpace = remaining.indexOf(' ');
-
-    if (secondSpace < 0) {
-      Serial.println("Fehler: Format COLOR <R> <G> <B>, Werte jeweils 0-255.");
-      return;
-    }
-
-    String greenText = remaining.substring(0, secondSpace);
-    String blueText = remaining.substring(secondSpace + 1);
-    blueText.trim();
-
-    uint8_t red, green, blue;
-    if (!parseByteValue(redText, red) ||
-        !parseByteValue(greenText, green) ||
-        !parseByteValue(blueText, blue)) {
-      Serial.println("Fehler: RGB-Werte muessen ganze Zahlen von 0 bis 255 sein.");
-      return;
-    }
-
-    mesh.setColor(lightNumber, red, green, blue);
-    return;
-  }
-
-  Serial.println("Unbekannte Aktion. Erlaubt: ON, OFF, COLOR, RGB, BRIGHTNESS.");
-}
-
-// ---------------------------------------------------------------------------
 // Automatische Lichtszene anhand des Sonnenstands
 // ---------------------------------------------------------------------------
 
@@ -371,14 +239,14 @@ const int MISSION_MONTH = 7;
 const int MISSION_DAY = 1;
 
 // Missionsdatum aus DCS: Der Hook MissionDateHook.lua schreibt es in eine Datei, das DCS-BIOS-Modul
-// CommonData_MissionDate (dcs/MissionDate.lua) exportiert es als CommonData_MissionDate_YEAR / _MONTH / _DAY
+// CommonData_MissionDate (dcs/MissionDate.lua) exportiert es als CommonData_MISSION_YEAR / _MONTH / _DAY
 // (siehe dcs/ und README). Die Adressen kommen aus dem DCS-BIOS Reference Tool.
 // Stehen die Eintraege schon in einer Headerdatei der DCS-BIOS-Bibliothek, wird nichts weiter gebraucht.
 // Sonst hier einkommentieren und im Format der vorhandenen Eintraege (z.B. CommonData_LAT_DEG) ausfuellen.
 // Ohne diese Eintraege gilt das Ersatzdatum oben.
-//#define CommonData_MissionDate_YEAR  0x0000, 0x0000, 0   // Adresse, Maske, Shift: Platzhalter ersetzen, keine <> setzen
-//#define CommonData_MissionDate_MONTH 0x0000, 0x0000, 0   // Adresse, Maske, Shift: Platzhalter ersetzen, keine <> setzen
-//#define CommonData_MissionDate_DAY   0x0000, 0x0000, 0   // Adresse, Maske, Shift: Platzhalter ersetzen, keine <> setzen
+//#define CommonData_MISSION_YEAR  0x0486, 0xFFFF, 0   // Adresse, Maske, Shift: Platzhalter ersetzen, keine <> setzen
+//#define CommonData_MISSION_MONTH 0x0464, 0x1E00, 9   // Adresse, Maske, Shift: Platzhalter ersetzen, keine <> setzen
+//#define CommonData_MISSION_DAY   0488, 0x001F, 0   // Adresse, Maske, Shift: Platzhalter ersetzen, keine <> setzen
 
 // Standarddatum: gilt, bis DCS ein Datum liefert. Im Webinterface einstellbar und im Flash gespeichert
 // (die Konstanten oben sind nur der Werkswert).
@@ -426,7 +294,7 @@ void applyDcsMissionDate() {
   }
 }
 
-#if defined(CommonData_MissionDate_YEAR) && defined(CommonData_MissionDate_MONTH) && defined(CommonData_MissionDate_DAY)
+#if defined(CommonData_MISSION_YEAR) && defined(CommonData_MISSION_MONTH) && defined(CommonData_MISSION_DAY)
 const bool MISSION_DATE_CONFIGURED = true;
 void onMissionYearChange(unsigned int newValue) {
   dcsMissionYear = (int)newValue;
@@ -443,14 +311,250 @@ void onMissionDayChange(unsigned int newValue) {
   gotDcsMissionDay = true;
   Serial.printf("DCS MissionDate DAY = %u\n", newValue);
 }
-DcsBios::IntegerBuffer missionYearBuffer(CommonData_MissionDate_YEAR, onMissionYearChange);
-DcsBios::IntegerBuffer missionMonthBuffer(CommonData_MissionDate_MONTH, onMissionMonthChange);
-DcsBios::IntegerBuffer missionDayBuffer(CommonData_MissionDate_DAY, onMissionDayChange);
+DcsBios::IntegerBuffer missionYearBuffer(CommonData_MISSION_YEAR, onMissionYearChange);
+DcsBios::IntegerBuffer missionMonthBuffer(CommonData_MISSION_MONTH, onMissionMonthChange);
+DcsBios::IntegerBuffer missionDayBuffer(CommonData_MISSION_DAY, onMissionDayChange);
 #else
 // Es muessen ALLE DREI Eintraege definiert sein, sonst bleibt das DCS-Datum komplett abgeschaltet.
 const bool MISSION_DATE_CONFIGURED = false;
-#pragma message("MissionDate: CommonData_MissionDate_YEAR, _MONTH und _DAY sind nicht alle definiert. Es gilt das Standarddatum.")
+#pragma message("MissionDate: CommonData_MISSION_YEAR, _MONTH und _DAY sind nicht alle definiert. Es gilt das Standarddatum.")
 #endif
+
+// ---------------------------------------------------------------------------
+// DCS-Map-Zeitzonen
+// ---------------------------------------------------------------------------
+// Die Kartenkennung wird spaeter durch die eigene Kartenerkennung gesetzt.
+// Dazu den Callback onMapIdChange() mit dem passenden DCS-BIOS-Buffer verbinden.
+// Die IDs sind hier interne BRMesh-IDs und NICHT die internen DCS-Theatre-Namen.
+enum DcsMapId : uint8_t {
+  MAP_UNKNOWN = 0,
+  MAP_CAUCASUS,
+  MAP_NEVADA,
+  MAP_NORMANDY,
+  MAP_PERSIAN_GULF,
+  MAP_CHANNEL,
+  MAP_SYRIA,
+  MAP_MARIANAS,
+  MAP_FALKLANDS,
+  MAP_SINAI,
+  MAP_KOLA,
+  MAP_AFGHANISTAN,
+  MAP_IRAQ,
+  MAP_GERMANY_CW
+};
+
+enum DstRule : uint8_t {
+  DST_RULE_NONE = 0,
+  DST_RULE_US,
+  DST_RULE_EU
+};
+
+struct MapTimeZone {
+  DcsMapId id;
+  const char *name;
+  const char *icao;
+  const char *airport;
+  int16_t stdOffsetMinutes;
+  DstRule dstRule;
+};
+
+MapTimeZone MAP_TIME_ZONES[] = {
+  { MAP_CAUCASUS,     "Caucasus",                    "UGKO", "Kutaisi Intl (Georgia)",             240, DST_RULE_NONE },
+  { MAP_NEVADA,       "Nevada (NTTR)",               "KLAS", "Harry Reid Intl, Las Vegas",         -480, DST_RULE_US },
+  { MAP_NORMANDY,     "Normandy",                    "LFRK", "Caen-Carpiquet",                      60, DST_RULE_EU },
+  { MAP_PERSIAN_GULF, "Persian Gulf",                "OMDB", "Dubai Intl",                          240, DST_RULE_NONE },
+  { MAP_CHANNEL,      "The Channel",                 "LFAC", "Calais-Dunkerque",                    60, DST_RULE_EU },
+  { MAP_SYRIA,        "Syria",                       "OSDI", "Damascus Intl",                      180, DST_RULE_NONE },
+  { MAP_MARIANAS,     "Marianas",                    "PGUM", "Antonio B. Won Pat Intl, Guam",      600, DST_RULE_NONE },
+  { MAP_FALKLANDS,    "South Atlantic (Falklands)",  "EGYP", "RAF Mount Pleasant",                -240, DST_RULE_NONE },
+  { MAP_SINAI,        "Sinai",                       "HESH", "Sharm El Sheikh Intl",                120, DST_RULE_NONE },
+  { MAP_KOLA,         "Kola Peninsula",              "ULMM", "Murmansk",                            180, DST_RULE_NONE },
+  { MAP_AFGHANISTAN,  "Afghanistan",                 "OAKB", "Kabul Intl",                          270, DST_RULE_NONE },
+  { MAP_IRAQ,         "Iraq",                        "ORBI", "Baghdad Intl",                        180, DST_RULE_NONE },
+  { MAP_GERMANY_CW,   "Germany Cold War",            "ETAR", "Ramstein AB",                         60, DST_RULE_EU }
+};
+
+const size_t MAP_TIME_ZONE_COUNT = sizeof(MAP_TIME_ZONES) / sizeof(MAP_TIME_ZONES[0]);
+
+
+// Fallback-Zeitzone: Werkseinstellung UTC. Kann in der WebUI geaendert werden.
+int16_t defaultUtcOffsetMinutes = 0;
+DstRule defaultDstRule = DST_RULE_NONE;
+
+const char *dstRuleName(DstRule rule) {
+  switch (rule) {
+    case DST_RULE_US: return "us";
+    case DST_RULE_EU: return "eu";
+    default: return "none";
+  }
+}
+
+bool parseDstRule(int value, DstRule &rule) {
+  if (value < 0 || value > 2) return false;
+  rule = static_cast<DstRule>(value);
+  return true;
+}
+
+void loadTimeZoneConfig() {
+  Preferences prefs;
+  if (!prefs.begin("timezone", true)) return;
+  defaultUtcOffsetMinutes = (int16_t)prefs.getShort("fo", 0);
+  defaultDstRule = static_cast<DstRule>(prefs.getUChar("fr", DST_RULE_NONE));
+  if (defaultUtcOffsetMinutes < -720 || defaultUtcOffsetMinutes > 840 || defaultDstRule > DST_RULE_EU) {
+    defaultUtcOffsetMinutes = 0;
+    defaultDstRule = DST_RULE_NONE;
+  }
+  for (size_t i = 0; i < MAP_TIME_ZONE_COUNT; ++i) {
+    char ok[8], rk[8];
+    snprintf(ok, sizeof(ok), "o%u", (unsigned)MAP_TIME_ZONES[i].id);
+    snprintf(rk, sizeof(rk), "r%u", (unsigned)MAP_TIME_ZONES[i].id);
+    const int16_t off = (int16_t)prefs.getShort(ok, MAP_TIME_ZONES[i].stdOffsetMinutes);
+    const uint8_t rule = prefs.getUChar(rk, MAP_TIME_ZONES[i].dstRule);
+    if (off >= -720 && off <= 840 && rule <= DST_RULE_EU) {
+      MAP_TIME_ZONES[i].stdOffsetMinutes = off;
+      MAP_TIME_ZONES[i].dstRule = static_cast<DstRule>(rule);
+    }
+  }
+  prefs.end();
+}
+
+bool setTimeZoneConfig(int id, int offsetMinutes, int ruleValue, String &error) {
+  DstRule rule;
+  if (offsetMinutes < -720 || offsetMinutes > 840) { error = "UTC offset must be between -12:00 and +14:00"; return false; }
+  if (!parseDstRule(ruleValue, rule)) { error = "Invalid daylight-saving rule"; return false; }
+
+  Preferences prefs;
+  if (!prefs.begin("timezone", false)) { error = "Could not open flash storage"; return false; }
+  if (id == 0) {
+    prefs.putShort("fo", (int16_t)offsetMinutes);
+    prefs.putUChar("fr", (uint8_t)rule);
+    defaultUtcOffsetMinutes = (int16_t)offsetMinutes;
+    defaultDstRule = rule;
+  } else {
+    bool found = false;
+    for (size_t i = 0; i < MAP_TIME_ZONE_COUNT; ++i) {
+      if ((int)MAP_TIME_ZONES[i].id != id) continue;
+      char ok[8], rk[8];
+      snprintf(ok, sizeof(ok), "o%u", (unsigned)id);
+      snprintf(rk, sizeof(rk), "r%u", (unsigned)id);
+      prefs.putShort(ok, (int16_t)offsetMinutes);
+      prefs.putUChar(rk, (uint8_t)rule);
+      MAP_TIME_ZONES[i].stdOffsetMinutes = (int16_t)offsetMinutes;
+      MAP_TIME_ZONES[i].dstRule = rule;
+      found = true;
+      break;
+    }
+    if (!found) { prefs.end(); error = "Unknown map ID"; return false; }
+  }
+  prefs.end();
+  return true;
+}
+
+String buildTimeZoneJson() {
+  String j;
+  j.reserve(1200);
+  j += "{\"default\":{\"offset\":";
+  j += String(defaultUtcOffsetMinutes / 60.0f, 2);
+  j += ",\"rule\":"; j += (int)defaultDstRule;
+  j += "},\"maps\":[";
+  for (size_t i = 0; i < MAP_TIME_ZONE_COUNT; ++i) {
+    if (i) j += ',';
+    j += "{\"id\":"; j += (int)MAP_TIME_ZONES[i].id;
+    j += ",\"name\":\""; j += MAP_TIME_ZONES[i].name;
+    j += "\",\"offset\":"; j += String(MAP_TIME_ZONES[i].stdOffsetMinutes / 60.0f, 2);
+    j += ",\"rule\":"; j += (int)MAP_TIME_ZONES[i].dstRule;
+    j += '}';
+  }
+  j += "]}";
+  return j;
+}
+
+volatile uint8_t currentDcsMapId = MAP_UNKNOWN;
+bool gotDcsMapId = false;
+
+// Platzhaltercallback: Die spaetere Kartenerkennung soll einen dieser internen
+// MAP_* Werte liefern. Der Callback ist bewusst analog zu den uebrigen
+// DCS-BIOS-Callbacks aufgebaut.
+void onMapIdChange(unsigned int newValue) {
+  if (newValue <= MAP_GERMANY_CW) {
+    currentDcsMapId = static_cast<uint8_t>(newValue);
+    gotDcsMapId = (newValue != MAP_UNKNOWN);
+  } else {
+    currentDcsMapId = MAP_UNKNOWN;
+    gotDcsMapId = false;
+  }
+}
+DcsBios::IntegerBuffer mapIdBuffer(CommonData_MAP_ID, onMapIdChange);
+
+// Spaeter den passenden DCS-BIOS-Makroeintrag ergaenzen, z.B.:
+// DcsBios::IntegerBuffer mapIdBuffer(CommonData_MAP_ID, onMapIdChange);
+// Dabei muss CommonData_MAP_ID den numerischen MAP_* Wert liefern.
+
+const MapTimeZone *findMapTimeZone() {
+  if (!gotDcsMapId) return nullptr;
+  const uint8_t mapId = currentDcsMapId;
+  for (size_t i = 0; i < MAP_TIME_ZONE_COUNT; ++i) {
+    if (MAP_TIME_ZONES[i].id == mapId) return &MAP_TIME_ZONES[i];
+  }
+  return nullptr;
+}
+
+
+bool isLeapYear(int year) {
+  return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+int daysInMonth(int year, int month) {
+  const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (month == 2 && isLeapYear(year)) return 29;
+  return days[month - 1];
+}
+
+// Wochentag: Sonntag = 0 ... Samstag = 6.
+int dayOfWeek(int year, int month, int day) {
+  static const int offsets[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  if (month < 3) --year;
+  return (year + year / 4 - year / 100 + year / 400 + offsets[month - 1] + day) % 7;
+}
+
+int nthSundayOfMonth(int year, int month, int nth) {
+  const int firstSunday = 1 + (7 - dayOfWeek(year, month, 1)) % 7;
+  return firstSunday + (nth - 1) * 7;
+}
+
+int lastSundayOfMonth(int year, int month) {
+  const int lastDay = daysInMonth(year, month);
+  return lastDay - dayOfWeek(year, month, lastDay);
+}
+
+bool isDaylightSavingTime(const MapTimeZone &tz, int year, int month, int day, int hour) {
+  if (tz.dstRule == DST_RULE_NONE) return false;
+
+  if (tz.dstRule == DST_RULE_US) {
+    const int startDay = nthSundayOfMonth(year, 3, 2);
+    const int endDay = nthSundayOfMonth(year, 11, 1);
+    if (month < 3 || month > 11) return false;
+    if (month > 3 && month < 11) return true;
+    if (month == 3) return day > startDay || (day == startDay && hour >= 2);
+    return day < endDay || (day == endDay && hour < 2);
+  }
+
+  // EU: Beginn am letzten Sonntag im Maerz um 02:00 Lokalzeit (CET),
+  // Ende am letzten Sonntag im Oktober um 03:00 Lokalzeit (CEST).
+  const int startDay = lastSundayOfMonth(year, 3);
+  const int endDay = lastSundayOfMonth(year, 10);
+  if (month < 3 || month > 10) return false;
+  if (month > 3 && month < 10) return true;
+  if (month == 3) return day > startDay || (day == startDay && hour >= 2);
+  return day < endDay || (day == endDay && hour < 3);
+}
+
+bool getMapUtcOffset(const MapTimeZone &tz, int year, int month, int day,
+                     int hour, float &utcOffsetHours, bool &dstActive) {
+  dstActive = isDaylightSavingTime(tz, year, month, day, hour);
+  utcOffsetHours = (tz.stdOffsetMinutes + (dstActive ? 60 : 0)) / 60.0f;
+  return true;
+}
 
 enum LightScene : int {
   SCENE_NIGHT = 0,
@@ -482,15 +586,6 @@ bool parseMissionElapsedSeconds(const char *value, unsigned long &elapsedSeconds
   return true;
 }
 
-bool isLeapYear(int year) {
-  return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-}
-
-int daysInMonth(int year, int month) {
-  const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  if (month == 2 && isLeapYear(year)) return 29;
-  return days[month - 1];
-}
 
 void addDaysToDate(int &year, int &month, int &day, unsigned long daysToAdd) {
   while (daysToAdd-- > 0) {
@@ -571,14 +666,34 @@ float normalizeDegrees(float value) {
 
 void calculateSolarPosition(
     int year, int month, int day, int hour, int minute, int second,
-    double latitudeDeg, double longitudeDeg,
+    double latitudeDeg, double longitudeDeg, float utcOffsetHours,
     float &elevationDeg, float &azimuthDeg) {
   const double pi = 3.14159265358979323846;
 
   const double localHours = hour + minute / 60.0 + second / 3600.0;
+  double utcHours = localHours - utcOffsetHours;
+  int utcYear = year;
+  int utcMonth = month;
+  int utcDay = day;
 
-  int y = year;
-  int m = month;
+  // Julian Date muss UTC verwenden. Missionszeit und Datum bleiben im
+  // DCS-Karten-Lokalzeitbezug; hier wird nur fuer die Astronomie umgerechnet.
+  if (utcHours < 0.0) {
+    utcHours += 24.0;
+    if (--utcDay < 1) {
+      if (--utcMonth < 1) { utcMonth = 12; --utcYear; }
+      utcDay = daysInMonth(utcYear, utcMonth);
+    }
+  } else if (utcHours >= 24.0) {
+    utcHours -= 24.0;
+    if (++utcDay > daysInMonth(utcYear, utcMonth)) {
+      utcDay = 1;
+      if (++utcMonth > 12) { utcMonth = 1; ++utcYear; }
+    }
+  }
+
+  int y = utcYear;
+  int m = utcMonth;
   if (m <= 2) {
     y--;
     m += 12;
@@ -588,7 +703,7 @@ void calculateSolarPosition(
   int B = 2 - A + A / 4;
   double jd = floor(365.25 * (y + 4716))
             + floor(30.6001 * (m + 1))
-            + day + B - 1524.5 + localHours / 24.0;
+            + utcDay + B - 1524.5 + utcHours / 24.0;
   double T = (jd - 2451545.0) / 36525.0;
 
   double L0 = fmod(280.46646 + T * (36000.76983 + 0.0003032 * T), 360.0);
@@ -621,12 +736,10 @@ void calculateSolarPosition(
        - 0.5 * yTerm * yTerm * sin(4.0 * L0rad)
        - 1.25 * 0.016708634 * 0.016708634 * sin(2.0 * Mrad));
 
-  // Mittelpunkt der Zeitzone (Vielfache von 15° Laenge)
-  double zoneMeridian = 15.0 * round(longitudeDeg / 15.0);
-
-  // Wahre Sonnenzeit in Minuten
+  // Wahre Sonnenzeit aus UTC und geografischer Laenge.
+  // Der Karten-UTC-Offset wurde bereits bei der Umrechnung local -> UTC angewandt.
   double trueSolarMinutes = fmod(
-      localHours * 60.0 + eqTime + 4.0 * (longitudeDeg - zoneMeridian), 1440.0);
+      utcHours * 60.0 + eqTime + 4.0 * longitudeDeg, 1440.0);
   if (trueSolarMinutes < 0.0) trueSolarMinutes += 1440.0;
 
   double hourAngleDeg = trueSolarMinutes / 4.0 - 180.0;
@@ -770,13 +883,25 @@ String buildLiveJson() {
   if (modTimeSeen) dcs = (now - lastModTimeChange > MOD_TIME_TIMEOUT_MS) ? 2 : 1;
 
   String j;
-  j.reserve(760);
+  j.reserve(840);
   j += "{\"dcs\":";
   j += dcs;
   j += ",\"age\":";
   j += modTimeSeen ? String((now - lastModTimeChange) / 1000UL) : String("null");
   j += ",\"fallback\":";
   j += fallbackActive ? "true" : "false";
+
+  const MapTimeZone *mapTz = findMapTimeZone();
+  if (mapTz) {
+    j += ",\"map\":\"";
+    j += mapTz->name;
+    j += "\"";
+  } else {
+    j += ",\"map\":null";
+  }
+  j += ",\"tzsrc\":\"";
+  j += mapTz ? "map" : "default";
+  j += "\"";
 
   char dateBuf[64];
   snprintf(dateBuf, sizeof(dateBuf), ",\"mdate\":\"%04d-%02d-%02d\",\"msrc\":\"%s\"",
@@ -888,6 +1013,18 @@ void updateAutomaticLighting(bool apply) {
   int solarDay = missionDay;
   addDaysToDate(solarYear, solarMonth, solarDay, dayOffset);
 
+  const MapTimeZone *mapTz = findMapTimeZone();
+  float utcOffsetHours = 0.0f;
+  bool dstActive = false;
+  if (mapTz) {
+    getMapUtcOffset(*mapTz, solarYear, solarMonth, solarDay, hour,
+                    utcOffsetHours, dstActive);
+  } else {
+    MapTimeZone fallbackTz = { MAP_UNKNOWN, "Default", "", "", defaultUtcOffsetMinutes, defaultDstRule };
+    getMapUtcOffset(fallbackTz, solarYear, solarMonth, solarDay, hour,
+                    utcOffsetHours, dstActive);
+  }
+
   double latitude = 0.0, longitude = 0.0;
   if (!getDcsPosition(latitude, longitude)) {
     Serial.println("Ungueltige DCS-Koordinaten; Sonnenstand wird nicht berechnet.");
@@ -899,7 +1036,7 @@ void updateAutomaticLighting(bool apply) {
 
   calculateSolarPosition(
       solarYear, solarMonth, solarDay,
-      hour, minute, second, latitude, longitude,
+      hour, minute, second, latitude, longitude, utcOffsetHours,
       sunElevationDeg, sunAzimuthDeg);
 
     currentHorizonDip = 0.0f;
@@ -924,9 +1061,8 @@ void updateAutomaticLighting(bool apply) {
 // ---------------------------------------------------------------------------
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);  // Nur Diagnoseausgabe; keine serielle Steuerung mehr.
   delay(500);
-
   mesh.begin("ESP32 as iBeacon");
   
   Serial.println("BRMesh-Controller bereit.");
@@ -935,15 +1071,17 @@ void setup() {
   web.setHostname(OTA_HOSTNAME);   // für mDNS
   DcsBios::setup(ssid, passwd);
   loadDefaultMissionDate();
+  loadTimeZoneConfig();
   scene.begin();
   web.begin();
   web.onLiveData(buildLiveJson);
   web.onDateGet(buildDateJson);
   web.onDateSet(setDefaultMissionDate);
+  web.onTimeZoneGet(buildTimeZoneJson);
+  web.onTimeZoneSet(setTimeZoneConfig);
   web.onAutoResume([]() { lightInitialized = false; scene.resetState(); });
   setupOTA();
    
-  printHelp();
 }
 
 void loop() {
@@ -957,10 +1095,6 @@ void loop() {
 #endif
 
 
-  if (Serial.available()) {
-    String command = Serial.readStringUntil('\n');
-    processSerialCommand(command);
-  }
 
   DcsBios::loop();
   mesh.loop();
